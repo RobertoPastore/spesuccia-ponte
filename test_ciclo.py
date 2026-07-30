@@ -14,7 +14,14 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from ciclo import ConfigurazioneCiclo, ErroreDiCiclo, applica_operazioni, nuovo_run_id
+import ciclo as modulo_ciclo
+from ciclo import (
+    ConfigurazioneCiclo,
+    ErroreDiCiclo,
+    applica_operazioni,
+    esegui_ciclo,
+    nuovo_run_id,
+)
 
 
 class TrasportoFinto:
@@ -162,6 +169,63 @@ class TestApplicaOperazioni(unittest.TestCase):
         ponte = TrasportoFinto()
         self.assertEqual(applica_operazioni(ponte, []), [])
         self.assertEqual(ponte.chiamate, [])
+
+
+class PonteFinto(TrasportoFinto):
+    """Un trasporto finto che sa anche leggere le righe della nota."""
+
+    def __init__(self, righe: list[Any] | None = None) -> None:
+        super().__init__()
+        self.righe = righe or []
+
+    def leggi_righe(self) -> list[Any]:
+        return self.righe
+
+
+class TestEseguiCiclo(unittest.TestCase):
+    """I tre passi, con le due chiamate HTTP sostituite."""
+
+    def setUp(self) -> None:
+        self.configurazione = ConfigurazioneCiclo(
+            url_funzioni="https://esempio.supabase.co/functions/v1",
+            token_ponte="token-finto",
+        )
+        self.ack_ricevuti: list[tuple[str, list[dict[str, Any]]]] = []
+        self._chiedi = modulo_ciclo.chiedi_operazioni
+        self._riferisci = modulo_ciclo.riferisci_esiti
+        modulo_ciclo.riferisci_esiti = lambda _c, run_id, esiti: self.ack_ricevuti.append(
+            (run_id, esiti)
+        )
+
+    def tearDown(self) -> None:
+        modulo_ciclo.chiedi_operazioni = self._chiedi
+        modulo_ciclo.riferisci_esiti = self._riferisci
+
+    def test_un_ciclo_muto_riferisce_lo_stesso(self) -> None:
+        # ⚠️ È la prova che tiene onesta la spia dell'app. `keep-ack` è l'unico
+        # che scrive `bridge_state.last_sync_at`, e «ponte fermo» si deriva
+        # dall'**età** di quell'istante. Saltando l'ack quando non c'è niente da
+        # fare — cioè quasi sempre, a regime — l'istante non si muoverebbe più,
+        # e dopo tre ore l'app direbbe «ponte fermo» mentre il ponte funziona.
+        modulo_ciclo.chiedi_operazioni = lambda _c, _r, _righe: []
+
+        riepilogo = esegui_ciclo(PonteFinto(), self.configurazione, run_id="run-muto")
+
+        self.assertEqual(riepilogo["operazioni"], 0)
+        self.assertEqual(self.ack_ricevuti, [("run-muto", [])])
+
+    def test_un_ciclo_con_operazioni_riferisce_gli_esiti(self) -> None:
+        modulo_ciclo.chiedi_operazioni = lambda _c, _r, _righe: [
+            {"op": "crea_riga", "op_id": "r-1", "testo": "🥕 carote"},
+        ]
+
+        riepilogo = esegui_ciclo(PonteFinto(), self.configurazione, run_id="run-pieno")
+
+        self.assertEqual(riepilogo["riuscite"], 1)
+        run_id, esiti = self.ack_ricevuti[0]
+        self.assertEqual(run_id, "run-pieno")
+        self.assertEqual(esiti[0]["op_id"], "r-1")
+        self.assertTrue(esiti[0]["ok"])
 
 
 class TestConfigurazione(unittest.TestCase):

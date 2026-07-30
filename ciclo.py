@@ -319,10 +319,30 @@ def esegui_ciclo(
 
     operazioni = chiedi_operazioni(configurazione, identificativo, righe)
     if not operazioni:
-        # Il caso normale a regime, ed è quello che deve costare meno: nessuna
-        # scrittura su Keep, nessun ack. Se qui comparisse un'operazione a ogni
-        # giro, sarebbe il ciclo che non converge di ADR-0009 vincolo 4.
+        # Il caso normale a regime: nessuna scrittura su Keep. Se qui
+        # comparisse un'operazione a ogni giro, sarebbe il ciclo che non
+        # converge di ADR-0009 vincolo 4.
+        #
+        # ⚠️ **Si chiama `keep-ack` lo stesso, con un elenco vuoto**, e la prima
+        # stesura non lo faceva — sembrava sprecato chiamare una funzione per
+        # dirle che non è successo niente.
+        #
+        # È invece la cosa più importante che questo ramo fa. `keep-ack` è
+        # l'unico che scrive `bridge_state.last_sync_at`, e la spia dell'app
+        # deriva «ponte fermo» dall'**età** di quell'istante: nessuno scrive
+        # «sono fermo», perché un ponte fermo non scrive niente.
+        #
+        # Saltando l'ack, a regime — cioè quasi sempre — l'istante non si
+        # sarebbe mosso più: dopo 45 minuti l'app avrebbe detto «ponte in
+        # ritardo» e dopo tre ore «ponte fermo», **mentre il ponte funzionava
+        # benissimo**. Una spia che grida al lupo quando tutto va bene si impara
+        # a ignorarla, ed è esattamente il modo di non accorgersi dell'allarme
+        # vero.
+        #
+        # «Ho girato e non c'era niente da fare» è un'informazione, e va
+        # riferita.
         logger.info("Ciclo %s: niente da fare.", identificativo)
+        riferisci_esiti(configurazione, identificativo, [])
         return {"run_id": identificativo, "righe": len(righe), "operazioni": 0, "riuscite": 0}
 
     logger.info("Ciclo %s: %d operazioni da applicare.", identificativo, len(operazioni))
