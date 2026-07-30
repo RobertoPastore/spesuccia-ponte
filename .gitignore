@@ -1,0 +1,27 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# ⚠️ Questo file è la prima difesa, non l'ultima.
+#
+# Un segreto committato resta nella storia di git anche dopo la rimozione: su
+# un repository pubblico, resta anche nelle copie che qualcuno ha già preso.
+# L'unica difesa che funziona davvero è non farcelo entrare mai.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Il file di configurazione locale. ⚠️ Contiene il master token.
+.env
+*.env
+!.env.example
+
+# Ambienti virtuali
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Materiale di sessione di gkeepapi: non contiene il master token, ma contiene
+# il testo di tutte le note dell'account dedicato.
+state/
+*.state.json
+cookie.txt
+
+# Il file che il commit di mantenimento tocca ogni settimana **non** va qui:
+# è l'unica cosa che tiene vivo il cron.

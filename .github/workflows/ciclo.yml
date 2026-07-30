@@ -1,0 +1,150 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Il ciclo del ponte, su GitHub Actions (ADR-0012).
+#
+# ⚠️ QUESTO FILE ESISTE IN DUE POSTI, E UNO SOLO DEI DUE È ATTIVO.
+#
+#   `bridge/workflow-ponte.yml`      il modello, nel repository privato, versionato
+#                                    accanto al Python che esegue — perché i due
+#                                    devono restare d'accordo, e un file che vive
+#                                    solo altrove si dimentica;
+#   `.github/workflows/ciclo.yml`    la copia attiva, nel repository pubblico
+#                                    `spesuccia-ponte`.
+#
+# Sono identici al byte. Tenerlo attivo **anche** nel repository privato sarebbe
+# un difetto vero: due cicli in parallelo sulla stessa nota, che si rincorrono a
+# vicenda — e il primo indizio sarebbe una riga che cambia da sola.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# I SEGRETI
+# ═══════════════════════════════════════════════════════════════════════════
+# Vanno nei Secrets del repository pubblico (Settings → Secrets and variables →
+# Actions). Sono cifrati e non compaiono nei log nemmeno per sbaglio: GitHub
+# maschera da sé qualunque valore di un secret che compaia nell'output.
+#
+#   SPESUCCIA_KEEP_EMAIL          l'account dedicato
+#   SPESUCCIA_KEEP_MASTER_TOKEN   ⚠️ vale quanto la sua password, e non scade
+#   SPESUCCIA_KEEP_NOTE_ID        l'ID della nota reale
+#   SPESUCCIA_KEEP_DEVICE_ID      16 cifre esadecimali, generate una volta sola
+#   SPESUCCIA_URL_FUNZIONI        https://<progetto>.supabase.co/functions/v1
+#   SPESUCCIA_TOKEN_PONTE         il segreto condiviso con le due Edge Function
+#
+# Il master token non passa **mai** da chat, log, commit o messaggi. Se uscisse
+# anche solo per un istante: si cambia la password dell'account dedicato, che è
+# l'unico modo di revocarlo. È più veloce che pentirsene.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: Ciclo del ponte
+
+on:
+  schedule:
+    # ⚠️ Cinque minuti è il **minimo** che GitHub accetta, e non è una garanzia:
+    # le esecuzioni schedulate sono dichiaratamente «best effort», con ritardi
+    # normali di 5–30 minuti e fino a un'ora nelle ore di punta. La latenza
+    # vera, voce → tessera, è quindi 5–35 minuti (ADR-0012 §5, che ha riscritto
+    # la Sez. 2 del brief).
+    - cron: '*/5 * * * *'
+
+  # Per provare un ciclo a mano dalla scheda Actions, senza aspettare il cron.
+  workflow_dispatch:
+
+# ⚠️ Un ciclo alla volta, e i ritardatari si buttano.
+#
+# Se un ciclo dura più di cinque minuti — Keep lento, molte operazioni — il cron
+# ne fa partire un altro mentre il primo è ancora in volo: due processi che
+# scrivono sulla stessa nota, con due `run_id` diversi e due piani che si
+# ignorano a vicenda.
+#
+# `cancel-in-progress: false` e non `true`: si lascia **finire** quello che sta
+# già lavorando e si scarta il nuovo. Al contrario si ucciderebbe un ciclo a
+# metà, fra le operazioni e l'ack — che il riconciliatore sa recuperare, ma non
+# c'è ragione di provocarlo ogni volta.
+concurrency:
+  group: ciclo-del-ponte
+  cancel-in-progress: false
+
+permissions:
+  # Serve solo a scrivere il commit di mantenimento (vedi in fondo).
+  contents: write
+
+jobs:
+  ciclo:
+    runs-on: ubuntu-latest
+    # Il ciclo vero dura secondi. Cinque minuti è il tetto oltre il quale
+    # qualcosa è appeso — e su Actions il tempo appeso è quota consumata.
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Installa le dipendenze
+        run: pip install --quiet -r requirements.txt
+
+      - name: Esegui un ciclo
+        env:
+          SPESUCCIA_KEEP_EMAIL: ${{ secrets.SPESUCCIA_KEEP_EMAIL }}
+          SPESUCCIA_KEEP_MASTER_TOKEN: ${{ secrets.SPESUCCIA_KEEP_MASTER_TOKEN }}
+          SPESUCCIA_KEEP_NOTE_ID: ${{ secrets.SPESUCCIA_KEEP_NOTE_ID }}
+          SPESUCCIA_KEEP_DEVICE_ID: ${{ secrets.SPESUCCIA_KEEP_DEVICE_ID }}
+          SPESUCCIA_URL_FUNZIONI: ${{ secrets.SPESUCCIA_URL_FUNZIONI }}
+          SPESUCCIA_TOKEN_PONTE: ${{ secrets.SPESUCCIA_TOKEN_PONTE }}
+        run: python avvia.py
+
+  # ═════════════════════════════════════════════════════════════════════════
+  # ⚠️ IL COMMIT DI MANTENIMENTO
+  #
+  # GitHub **disabilita i workflow schedulati dopo 60 giorni senza commit
+  # nuovi**, su repository pubblici e privati, e solo i commit azzerano il
+  # contatore: aprire una issue o mettere un tag non basta.
+  #
+  # Tradotto: due mesi dopo la fine del progetto il ponte si spegnerebbe da
+  # solo, e il sintomo sarebbe «la lista non si aggiorna più», senza un errore
+  # da leggere (ADR-0012 §6).
+  #
+  # Questo lavoro tocca un file di data una volta a settimana. È brutto — sono
+  # commit che non dicono niente — e l'alternativa è un ponte che muore in
+  # silenzio a settembre.
+  #
+  # La seconda difesa, quella che conta di più, non è qui: è la spia «ponte
+  # fermo» dell'app, che si accorge di **qualunque** causa e non solo di questa.
+  # ═════════════════════════════════════════════════════════════════════════
+  mantenimento:
+    runs-on: ubuntu-latest
+    # Solo la domenica: un commit a settimana basta e avanza per un contatore
+    # che scade a sessanta giorni.
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rinnova il contatore dei 60 giorni
+        run: |
+          set -euo pipefail
+
+          # Solo di domenica, e solo nella prima esecuzione dell'ora: il cron
+          # gira ogni cinque minuti, e senza questo filtro sarebbero duecento
+          # commit a settimana invece di uno.
+          if [ "$(date -u +%u)" != "7" ] || [ "$(date -u +%M)" -ge 5 ]; then
+            echo "Non è il momento: nessun commit."
+            exit 0
+          fi
+
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .ultimo-mantenimento
+
+          git config user.name  "ponte-spesuccia"
+          git config user.email "ponte-spesuccia@users.noreply.github.com"
+          git add .ultimo-mantenimento
+
+          # `--allow-empty` no: se il file non è cambiato non c'è niente da
+          # dire, e un commit vuoto sarebbe rumore in più.
+          if git diff --cached --quiet; then
+            echo "Niente da committare."
+            exit 0
+          fi
+
+          git commit -m "Mantenimento: rinnova il contatore dei workflow schedulati"
+          git push

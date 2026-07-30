@@ -1,0 +1,41 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Dipendenze dello spike del ponte — Spesuccia M0
+#
+# Si installano SOLO dentro un ambiente virtuale locale (`bridge/.venv`, già nel
+# .gitignore). Mai a livello globale: questo codice parla con un'API mobile
+# privata di Google usando una credenziale che vale l'intero account dedicato,
+# e non ha ragione di essere raggiungibile da altri script della macchina.
+#
+#   python -m venv .venv
+#   .venv\Scripts\activate            (Windows)   ·   source .venv/bin/activate  (macOS/Linux)
+#   python -m pip install -r requirements.txt
+#
+# Versione di Python — verificata, non ipotizzata
+# ───────────────────────────────────────────────
+# Il brief Sez. 4 indica Python 3.11. Non serve: **Python 3.14 va bene**.
+# Verifiche fatte il 2026-07-26 sui metadati reali dei pacchetti:
+#   · gkeepapi 0.17.1 dichiara `Requires-Python: >=3.10`, senza tetto superiore;
+#   · gpsoauth 2.0.0 dichiara `>=3.9,<4.0`;
+#   · l'intero albero delle dipendenze si risolve in wheel binari per cp314 su
+#     Windows (pycryptodomex usa wheel `cp37-abi3`, quindi non compila nulla);
+#   · `import gkeepapi` e il modello a nodi funzionano su CPython 3.14.2.
+# Nota onesta: i *classifier* dei due pacchetti si fermano a 3.13, cioè gli
+# autori non collaudano ancora su 3.14. Se un giorno qualcosa si rompesse in
+# modo inspiegabile, provare con 3.12 o 3.13 è la prima cosa da fare.
+#
+# Dipendenze dirette (fissate: una libreria che parla con un'API non ufficiale
+# non va aggiornata per caso, va aggiornata guardando cosa è cambiato)
+# ─────────────────────────────────────────────────────────────────────────────
+
+gkeepapi==0.17.1
+gpsoauth==2.0.0
+
+# Dipendenze trascinate, per sapere cosa entra: requests, urllib3, certifi,
+# idna, charset-normalizer, pycryptodomex — e `future`, che gkeepapi dichiara
+# nei metadati ma **non importa da nessuna parte** (verificato leggendo il
+# sorgente della 0.17.1: nessun `import future`). È un residuo di quando la
+# libreria supportava Python 2; entra nell'ambiente e resta lì inerte.
+#
+# Per un'installazione riproducibile, dopo il primo `pip install`:
+#     python -m pip freeze > requirements.lock.txt
+# e da lì in poi installare da quel file.
