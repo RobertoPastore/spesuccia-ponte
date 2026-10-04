@@ -514,15 +514,20 @@ def verifica_nota_reale(
     nodo: Any,  # noqa: ANN401 - gkeepapi.node.TopLevelNode
     configurazione: Configurazione,
     conferma_note_id: str,
+    da_censimento_remoto: bool = False,
+    titolo_atteso: str | None = None,
 ) -> ConsensoNotaReale:
     """Guardie sulla nota reale. Poche, ma nessuna saltabile.
 
     Il brief Sez. 5.1 chiede l'«aggancio alla nota esistente, per titolo, con
     **conferma esplicita dell'ID nota** in configurazione», e Sez. 13 vieta di
-    crearne una nuova. Qui l'ID va detto **due volte** — una in configurazione e
-    una dal chiamante — perché un ID sbagliato in un file `.env` è un errore che
-    si copia, mentre due valori che devono coincidere non si copiano insieme per
-    distrazione.
+    crearne una nuova. Quando il ponte gira in locale o come fallback da singola
+    nota, l'ID va detto **due volte** — una in configurazione e una dal
+    chiamante — per impedire scritture distratte.
+
+    Quando il ponte gira in multi-famiglia (censimento remoto via GET /keep-pull,
+    ADR-0016), l'autorizzazione è data dall'ID censito in modo sicuro su Supabase
+    dall'amministratore della famiglia (con token di sicurezza ponte).
 
     Non c'è nessun limite di righe e nessun marcatore da cercare: la nota vera è
     grande e si chiama come si chiama. La guardia qui è l'opposto di quella dello
@@ -539,7 +544,7 @@ def verifica_nota_reale(
             "indovina su quale lista lavorare."
         )
     ids_ammessi = [i.strip() for i in configurazione.note_id.split(",") if i.strip()]
-    if ids_ammessi and conferma_note_id.strip() not in ids_ammessi:
+    if not da_censimento_remoto and ids_ammessi and conferma_note_id.strip() not in ids_ammessi:
         raise NotaRealeNonConfermata(
             "L'ID confermato non coincide con SPESUCCIA_KEEP_NOTE_ID. Il ponte "
             "si ferma: quando i due valori divergono, uno dei due è sbagliato e "
@@ -569,13 +574,15 @@ def verifica_nota_reale(
         )
 
     titolo = nodo.title or ""
-    if _normalizza(titolo) != _normalizza(configurazione.titolo_reale):
-        raise NotaRealeNonConfermata(
-            f"La nota si intitola «{titolo}», non «{configurazione.titolo_reale}». "
-            "O è la nota sbagliata, o qualcuno l'ha rinominata: in entrambi i "
-            "casi il ponte si ferma invece di scriverci dentro. Se il nome è "
-            "cambiato davvero, aggiorna SPESUCCIA_KEEP_TITOLO_REALE."
-        )
+    if not da_censimento_remoto:
+        atteso = titolo_atteso if (titolo_atteso and titolo_atteso.strip()) else configurazione.titolo_reale
+        if _normalizza(titolo) != _normalizza(atteso):
+            raise NotaRealeNonConfermata(
+                f"La nota si intitola «{titolo}», non «{atteso}». "
+                "O è la nota sbagliata, o qualcuno l'ha rinominata: in entrambi i "
+                "casi il ponte si ferma invece di scriverci dentro. Se il nome è "
+                "cambiato davvero, aggiorna SPESUCCIA_KEEP_TITOLO_REALE."
+            )
 
     righe = list(nodo.items)
     return ConsensoNotaReale(

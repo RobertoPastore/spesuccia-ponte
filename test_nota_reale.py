@@ -74,6 +74,13 @@ class TestLeDueConferme(unittest.TestCase):
             verifica_nota_reale(None, configurazione(), f"  {ID_NOTA}  ")
         self.assertIn("visibile dall'account dedicato", str(caso.exception))
 
+    def test_censimento_remoto_accetta_qualsiasi_id(self) -> None:
+        # Se la nota arriva dal censimento autorizzato remoto (GET /keep-pull),
+        # l'ID non è vincolato a SPESUCCIA_KEEP_NOTE_ID locale.
+        with self.assertRaises(NotaRealeNonConfermata) as caso:
+            verifica_nota_reale(None, configurazione(), "altro-id-valido", da_censimento_remoto=True)
+        self.assertIn("visibile dall'account dedicato", str(caso.exception))
+
 
 class TestConsensoNonFalsificabile(unittest.TestCase):
     def test_non_si_costruisce_a_mano(self) -> None:
@@ -153,6 +160,17 @@ class TestLeGuardieSullaNota(unittest.TestCase):
         # piccola. Qui è il contrario: la nota vera ne ha 47 e ne avrà di più.
         consenso = verifica_nota_reale(self._lista("Spesuccia", righe=200), configurazione(), ID_NOTA)
         self.assertEqual(consenso.righe_osservate, 200)
+
+    def test_censimento_remoto_accetta_qualsiasi_titolo(self) -> None:
+        # Una famiglia può intitolare la nota come preferisce.
+        consenso = verifica_nota_reale(
+            self._lista("Spesa di famiglia"),
+            configurazione(),
+            "qualsiasi-id",
+            da_censimento_remoto=True,
+        )
+        self.assertIsInstance(consenso, ConsensoNotaReale)
+        self.assertEqual(consenso.titolo, "Spesa di famiglia")
 
 
 if __name__ == "__main__":

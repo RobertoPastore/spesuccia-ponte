@@ -82,6 +82,7 @@ def main() -> int:
         logger.info("Sincronizzato a freddo in %.2f s.", secondi)
 
         # Passo 1: fetch configurazione note attive censite
+        da_censimento_remoto = True
         try:
             note_attive = ottieni_note_attive(configurazione_ciclo)
         except ErroreDiCiclo as errore:
@@ -92,6 +93,7 @@ def main() -> int:
             note_attive = []
 
         if not note_attive and configurazione_keep.note_id:
+            da_censimento_remoto = False
             note_attive = [{"list_id": "", "keep_note_id": configurazione_keep.note_id}]
 
         if not note_attive:
@@ -106,6 +108,7 @@ def main() -> int:
         for voce in note_attive:
             list_id = voce.get("list_id") or None
             keep_note_id = voce.get("keep_note_id")
+            titolo_atteso = voce.get("titolo") or voce.get("name") or None
             if not keep_note_id:
                 logger.warning("Voce nota priva di keep_note_id, saltata: %s", voce)
                 continue
@@ -114,7 +117,13 @@ def main() -> int:
             try:
                 nodo = risolvi_nota(keep, keep_note_id)
                 # ⚠️ La conferma è l'ID della nota verificato contro configurazione/censimento
-                consenso = verifica_nota_reale(nodo, configurazione_keep, keep_note_id)
+                consenso = verifica_nota_reale(
+                    nodo,
+                    configurazione_keep,
+                    keep_note_id,
+                    da_censimento_remoto=da_censimento_remoto,
+                    titolo_atteso=titolo_atteso,
+                )
                 logger.info("Nota «%s»: %d righe.", consenso.titolo, consenso.righe_osservate)
 
                 ponte = PonteKeep(keep, nodo, consenso)
