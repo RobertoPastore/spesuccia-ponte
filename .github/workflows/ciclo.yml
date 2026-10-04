@@ -47,6 +47,11 @@ on:
   # Per provare un ciclo a mano dalla scheda Actions, senza aspettare il cron.
   workflow_dispatch:
 
+  # Esegui immediatamente ad ogni aggiornamento su main
+  push:
+    branches:
+      - main
+
 # ⚠️ Un ciclo alla volta, e i ritardatari si buttano.
 #
 # Se un ciclo dura più di cinque minuti — Keep lento, molte operazioni — il cron
