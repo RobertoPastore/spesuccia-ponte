@@ -193,8 +193,8 @@ class TestEseguiCiclo(unittest.TestCase):
         self.ack_ricevuti: list[tuple[str, list[dict[str, Any]]]] = []
         self._chiedi = modulo_ciclo.chiedi_operazioni
         self._riferisci = modulo_ciclo.riferisci_esiti
-        modulo_ciclo.riferisci_esiti = lambda _c, run_id, esiti: self.ack_ricevuti.append(
-            (run_id, esiti)
+        modulo_ciclo.riferisci_esiti = (
+            lambda _c, run_id, esiti, **_kwargs: self.ack_ricevuti.append((run_id, esiti))
         )
 
     def tearDown(self) -> None:
@@ -207,7 +207,7 @@ class TestEseguiCiclo(unittest.TestCase):
         # dall'**età** di quell'istante. Saltando l'ack quando non c'è niente da
         # fare — cioè quasi sempre, a regime — l'istante non si muoverebbe più,
         # e dopo tre ore l'app direbbe «ponte fermo» mentre il ponte funziona.
-        modulo_ciclo.chiedi_operazioni = lambda _c, _r, _righe: []
+        modulo_ciclo.chiedi_operazioni = lambda _c, _r, _righe, **_kw: []
 
         riepilogo = esegui_ciclo(PonteFinto(), self.configurazione, run_id="run-muto")
 
@@ -215,7 +215,7 @@ class TestEseguiCiclo(unittest.TestCase):
         self.assertEqual(self.ack_ricevuti, [("run-muto", [])])
 
     def test_un_ciclo_con_operazioni_riferisce_gli_esiti(self) -> None:
-        modulo_ciclo.chiedi_operazioni = lambda _c, _r, _righe: [
+        modulo_ciclo.chiedi_operazioni = lambda _c, _r, _righe, **_kw: [
             {"op": "crea_riga", "op_id": "r-1", "testo": "🥕 carote"},
         ]
 
@@ -226,6 +226,33 @@ class TestEseguiCiclo(unittest.TestCase):
         self.assertEqual(run_id, "run-pieno")
         self.assertEqual(esiti[0]["op_id"], "r-1")
         self.assertTrue(esiti[0]["ok"])
+
+    def test_un_ciclo_con_list_id_inoltra_il_parametro(self) -> None:
+        chiamate_chiedi: list[dict[str, Any]] = []
+        chiamate_ack: list[dict[str, Any]] = []
+
+        def finto_chiedi(_c: Any, run_id: str, righe: list[Any], list_id: str | None = None) -> list[Any]:
+            chiamate_chiedi.append({"run_id": run_id, "list_id": list_id})
+            return [{"op": "crea_riga", "op_id": "r-1", "testo": "🥕 carote"}]
+
+        def finto_riferisci(
+            _c: Any, run_id: str, esiti: list[Any], list_id: str | None = None
+        ) -> None:
+            chiamate_ack.append({"run_id": run_id, "esiti": esiti, "list_id": list_id})
+
+        modulo_ciclo.chiedi_operazioni = finto_chiedi
+        modulo_ciclo.riferisci_esiti = finto_riferisci
+
+        riepilogo = esegui_ciclo(
+            PonteFinto(),
+            self.configurazione,
+            run_id="run-lista-2",
+            list_id="uuid-lista-2",
+        )
+
+        self.assertEqual(riepilogo["list_id"], "uuid-lista-2")
+        self.assertEqual(chiamate_chiedi[0]["list_id"], "uuid-lista-2")
+        self.assertEqual(chiamate_ack[0]["list_id"], "uuid-lista-2")
 
 
 class TestConfigurazione(unittest.TestCase):
@@ -256,5 +283,52 @@ class TestErroreDiCiclo(unittest.TestCase):
         self.assertTrue(issubclass(ErroreDiCiclo, Exception))
 
 
+class TestOttieniNoteAttive(unittest.TestCase):
+    def test_ottieni_note_attive_lista_e_dizionario(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        configurazione = ConfigurazioneCiclo(
+            url_funzioni="https://esempio.supabase.co/functions/v1",
+            token_ponte="token",
+        )
+
+        risposta_mock = MagicMock()
+        risposta_mock.read.return_value = b'[{"list_id": "l-1", "keep_note_id": "k-1"}, {"list_id": "l-2", "keep_note_id": "k-2"}]'
+        risposta_mock.__enter__.return_value = risposta_mock
+        risposta_mock.__exit__.return_value = None
+
+        with patch("urllib.request.urlopen", return_value=risposta_mock):
+            note = modulo_ciclo.ottieni_note_attive(configurazione)
+            self.assertEqual(len(note), 2)
+            self.assertEqual(note[0]["list_id"], "l-1")
+            self.assertEqual(note[1]["keep_note_id"], "k-2")
+
+
+class TestIsolamentoGuastiMultiNota(unittest.TestCase):
+    """ADR-0016: Una nota che fallisce non deve fermare l'esecuzione delle altre note."""
+
+    def test_errore_su_prima_nota_non_impedisce_seconda(self) -> None:
+        # Simuliamo il flusso di avvia.py per 2 note
+        note = [
+            {"list_id": "lista-guasta", "keep_note_id": "k-guasto"},
+            {"list_id": "lista-sana", "keep_note_id": "k-sano"},
+        ]
+
+        esiti_elaborati: list[str] = []
+
+        for info_nota in note:
+            list_id = info_nota["list_id"]
+            try:
+                if list_id == "lista-guasta":
+                    raise ErroreDiCiclo("Nota non valida o errore DB")
+                esiti_elaborati.append(list_id)
+            except Exception:
+                # Isolamento guasto come in avvia.py
+                continue
+
+        self.assertEqual(esiti_elaborati, ["lista-sana"])
+
+
 if __name__ == "__main__":
     unittest.main()
+

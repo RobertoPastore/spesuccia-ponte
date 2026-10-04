@@ -33,7 +33,13 @@ from __future__ import annotations
 import logging
 import sys
 
-from ciclo import ErroreDiCiclo, carica_configurazione_ciclo, esegui_ciclo, percorso_env_predefinito
+from ciclo import (
+    ErroreDiCiclo,
+    carica_configurazione_ciclo,
+    esegui_ciclo,
+    ottieni_note_attive,
+    percorso_env_predefinito,
+)
 from ponte_keep import PonteKeep, apri_sessione, autentica, risolvi_nota
 from sicurezza import (
     ErroreDiSicurezza,
@@ -75,17 +81,63 @@ def main() -> int:
         keep, secondi = apri_sessione(autenticazione, stato=None)
         logger.info("Sincronizzato a freddo in %.2f s.", secondi)
 
-        nodo = risolvi_nota(keep, configurazione_keep.note_id)
-        # ⚠️ La conferma è l'ID scritto in configurazione, ripetuto: è la doppia
-        # conferma del brief Sez. 5.1. Qui i due valori coincidono per
-        # costruzione, e il controllo resta perché il giorno in cui qualcuno
-        # passasse l'ID da un'altra parte — una riga di comando, una variabile
-        # diversa — la guardia sia già lì.
-        consenso = verifica_nota_reale(nodo, configurazione_keep, configurazione_keep.note_id)
-        logger.info("Nota «%s»: %d righe.", consenso.titolo, consenso.righe_osservate)
+        # Passo 1: fetch configurazione note attive censite
+        try:
+            note_attive = ottieni_note_attive(configurazione_ciclo)
+        except ErroreDiCiclo as errore:
+            logger.warning(
+                "Fetch configurazione GET /keep-pull non riuscito (%s), fallback su nota da configurazione locale.",
+                errore,
+            )
+            note_attive = []
 
-        ponte = PonteKeep(keep, nodo, consenso)
-        riepilogo = esegui_ciclo(ponte, configurazione_ciclo)
+        if not note_attive and configurazione_keep.note_id:
+            note_attive = [{"list_id": "", "keep_note_id": configurazione_keep.note_id}]
+
+        if not note_attive:
+            logger.warning("Nessuna nota Keep attiva da sincronizzare.")
+            return 0
+
+        logger.info("Trovate %d note attive da processare in sequenza.", len(note_attive))
+
+        note_completate = 0
+        errori_note = 0
+
+        for voce in note_attive:
+            list_id = voce.get("list_id") or None
+            keep_note_id = voce.get("keep_note_id")
+            if not keep_note_id:
+                logger.warning("Voce nota priva di keep_note_id, saltata: %s", voce)
+                continue
+
+            logger.info("--- Inizio ciclo nota Keep: %s (list_id: %s) ---", keep_note_id, list_id or "default")
+            try:
+                nodo = risolvi_nota(keep, keep_note_id)
+                # ⚠️ La conferma è l'ID della nota verificato contro configurazione/censimento
+                consenso = verifica_nota_reale(nodo, configurazione_keep, keep_note_id)
+                logger.info("Nota «%s»: %d righe.", consenso.titolo, consenso.righe_osservate)
+
+                ponte = PonteKeep(keep, nodo, consenso)
+                riepilogo = esegui_ciclo(ponte, configurazione_ciclo, list_id=list_id)
+                logger.info(
+                    "Nota %s completata. righe=%d operazioni=%d riuscite=%d",
+                    keep_note_id,
+                    riepilogo["righe"],
+                    riepilogo["operazioni"],
+                    riepilogo["riuscite"],
+                )
+                note_completate += 1
+            except Exception as errore:  # noqa: BLE001
+                # Invariante 3 (ADR-0016): Un errore su una nota non abortisce le altre!
+                logger.exception("Errore isolato durante il ciclo della nota %s: %s", keep_note_id, errore)
+                errori_note += 1
+                continue
+
+        logger.info(
+            "Ciclo complessivo terminato. Note completate: %d, Note con errori: %d.",
+            note_completate,
+            errori_note,
+        )
 
     except ErroreDiSicurezza as errore:
         # Una guardia che scatta non è un guasto da ritentare: è una condizione
@@ -100,18 +152,6 @@ def main() -> int:
         logger.exception("Guasto inatteso: %s", errore)
         return 1
 
-    logger.info(
-        "Fatto. righe=%d operazioni=%d riuscite=%d",
-        riepilogo["righe"],
-        riepilogo["operazioni"],
-        riepilogo["riuscite"],
-    )
-    # ⚠️ Un'operazione fallita **non** fa fallire l'esecuzione. È una condizione
-    # normale — una riga cancellata un istante prima — e il ciclo dopo la
-    # ricalcola. Colorare di rosso ogni giro con un intoppo insegnerebbe a
-    # ignorare il rosso, che è il modo migliore per non accorgersi di quello
-    # vero. Ciò che conta lo racconta `bridge_operations`, e l'app lo mostra
-    # come «ponte fermo» quando i cicli smettono di completarsi.
     return 0
 
 

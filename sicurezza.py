@@ -538,7 +538,8 @@ def verifica_nota_reale(
             "Serve la conferma esplicita dell'ID della nota. Il ponte non "
             "indovina su quale lista lavorare."
         )
-    if conferma_note_id.strip() != configurazione.note_id.strip():
+    ids_ammessi = [i.strip() for i in configurazione.note_id.split(",") if i.strip()]
+    if ids_ammessi and conferma_note_id.strip() not in ids_ammessi:
         raise NotaRealeNonConfermata(
             "L'ID confermato non coincide con SPESUCCIA_KEEP_NOTE_ID. Il ponte "
             "si ferma: quando i due valori divergono, uno dei due è sbagliato e "

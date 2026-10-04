@@ -154,13 +154,47 @@ def _chiama(
         raise ErroreDiCiclo(f"{funzione} ha risposto qualcosa che non è JSON.") from None
 
 
+def ottieni_note_attive(configurazione: ConfigurazioneCiclo) -> list[dict[str, str]]:
+    """Passo 1: chiede a keep-pull l'elenco delle note attive censite."""
+    richiesta = urllib.request.Request(
+        f"{configurazione.url_funzioni}/keep-pull",
+        method="GET",
+        headers={
+            "content-type": "application/json",
+            INTESTAZIONE_PONTE: configurazione.token_ponte,
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(richiesta, timeout=TIMEOUT_SECONDI) as risposta:
+            dati = json.loads(risposta.read().decode("utf-8"))
+            if isinstance(dati, list):
+                return dati
+            if isinstance(dati, dict):
+                return dati.get("note", dati.get("liste", []))
+            return []
+    except urllib.error.HTTPError as errore:
+        raise ErroreDiCiclo(
+            f"keep-pull GET ha risposto {errore.code}. "
+            "Se è 401, il token del ponte non coincide con quello della funzione."
+        ) from None
+    except urllib.error.URLError as errore:
+        raise ErroreDiCiclo(f"keep-pull non raggiungibile: {errore.reason}") from None
+    except json.JSONDecodeError:
+        raise ErroreDiCiclo("keep-pull ha risposto qualcosa che non è JSON.") from None
+
+
 def chiedi_operazioni(
     configurazione: ConfigurazioneCiclo,
     run_id: str,
     righe: list[dict[str, Any]],
+    list_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Passo 1: manda lo snapshot, riceve le operazioni."""
-    risposta = _chiama(configurazione, "keep-pull", {"run_id": run_id, "righe": righe})
+    """Passo 2: manda lo snapshot, riceve le operazioni."""
+    payload: dict[str, Any] = {"run_id": run_id, "righe": righe}
+    if list_id is not None and list_id.strip():
+        payload["list_id"] = list_id.strip()
+    risposta = _chiama(configurazione, "keep-pull", payload)
     operazioni = risposta.get("operazioni")
     if not isinstance(operazioni, list):
         raise ErroreDiCiclo("keep-pull non ha restituito un elenco di operazioni.")
@@ -171,9 +205,13 @@ def riferisci_esiti(
     configurazione: ConfigurazioneCiclo,
     run_id: str,
     esiti: list[dict[str, Any]],
+    list_id: str | None = None,
 ) -> None:
-    """Passo 3: dice com'è andata."""
-    _chiama(configurazione, "keep-ack", {"run_id": run_id, "esiti": esiti})
+    """Passo 4: dice com'è andata per quella specifica nota prima di passare alla successiva."""
+    payload: dict[str, Any] = {"run_id": run_id, "esiti": esiti}
+    if list_id is not None and list_id.strip():
+        payload["list_id"] = list_id.strip()
+    _chiama(configurazione, "keep-ack", payload)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -302,8 +340,9 @@ def esegui_ciclo(
     ponte: Any,  # noqa: ANN401 - PonteKeep, importato dal chiamante
     configurazione: ConfigurazioneCiclo,
     run_id: str | None = None,
+    list_id: str | None = None,
 ) -> dict[str, Any]:
-    """I tre passi, in fila. Restituisce un riepilogo per il log.
+    """I tre passi, in fila per una specifica nota. Restituisce un riepilogo per il log.
 
     Il riepilogo contiene **numeri**, non testi: finisce nei log di GitHub
     Actions, che su un repository pubblico legge chiunque. Il testo di una riga
@@ -315,9 +354,9 @@ def esegui_ciclo(
         {"external_id": riga.external_id, "testo": riga.testo, "spuntato": riga.spuntato}
         for riga in ponte.leggi_righe()
     ]
-    logger.info("Ciclo %s: %d righe sulla nota.", identificativo, len(righe))
+    logger.info("Ciclo %s (lista %s): %d righe sulla nota.", identificativo, list_id or "default", len(righe))
 
-    operazioni = chiedi_operazioni(configurazione, identificativo, righe)
+    operazioni = chiedi_operazioni(configurazione, identificativo, righe, list_id=list_id)
     if not operazioni:
         # Il caso normale a regime: nessuna scrittura su Keep. Se qui
         # comparisse un'operazione a ogni giro, sarebbe il ciclo che non
@@ -341,19 +380,26 @@ def esegui_ciclo(
         #
         # «Ho girato e non c'era niente da fare» è un'informazione, e va
         # riferita.
-        logger.info("Ciclo %s: niente da fare.", identificativo)
-        riferisci_esiti(configurazione, identificativo, [])
-        return {"run_id": identificativo, "righe": len(righe), "operazioni": 0, "riuscite": 0}
+        logger.info("Ciclo %s (lista %s): niente da fare.", identificativo, list_id or "default")
+        riferisci_esiti(configurazione, identificativo, [], list_id=list_id)
+        return {
+            "run_id": identificativo,
+            "list_id": list_id,
+            "righe": len(righe),
+            "operazioni": 0,
+            "riuscite": 0,
+        }
 
-    logger.info("Ciclo %s: %d operazioni da applicare.", identificativo, len(operazioni))
+    logger.info("Ciclo %s (lista %s): %d operazioni da applicare.", identificativo, list_id or "default", len(operazioni))
     esiti = applica_operazioni(ponte, operazioni)
-    riferisci_esiti(configurazione, identificativo, esiti)
+    riferisci_esiti(configurazione, identificativo, esiti, list_id=list_id)
 
     riuscite = sum(1 for esito in esiti if esito.get("ok"))
-    logger.info("Ciclo %s: %d riuscite su %d.", identificativo, riuscite, len(esiti))
+    logger.info("Ciclo %s (lista %s): %d riuscite su %d.", identificativo, list_id or "default", riuscite, len(esiti))
 
     return {
         "run_id": identificativo,
+        "list_id": list_id,
         "righe": len(righe),
         "operazioni": len(operazioni),
         "riuscite": riuscite,
