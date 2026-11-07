@@ -574,6 +574,27 @@ def verifica_nota_reale(
         )
 
     titolo = nodo.title or ""
+
+    # ⚠️ IL 14/10/2026: DIECI GIORNI SULLA NOTA DI PROVA, CON LA SPIA VERDE.
+    #
+    # Il censimento remoto ha tolto le due guardie qui sotto (ID e titolo), e
+    # la lista vera è rimasta agganciata alla nota «PROVA ponte» dello spike.
+    # Il ponte la sincronizzava benissimo e riferiva «ok», mentre la nota che
+    # la famiglia usava davvero non la guardava nessuno.
+    #
+    # Una famiglia può intitolare la sua nota come vuole, quindi il titolo non
+    # si confronta. Ma il marcatore della nota di prova è il contrassegno che lo
+    # spike **pretende** (vedi `verifica_nota_di_prova`): una nota che lo porta
+    # è per costruzione una nota di prova, e non è la lista di nessuno.
+    marcatore = configurazione.marcatore_prova.strip()
+    if da_censimento_remoto and marcatore and marcatore.lower() in titolo.lower():
+        raise NotaRealeNonConfermata(
+            f"La nota censita si intitola «{titolo}» e porta il marcatore della "
+            f"nota di prova («{marcatore}»): è la nota dello spike, non una "
+            "lista di famiglia. Il ponte si ferma invece di sincronizzarla: "
+            "controlla `lists.keep_note_id` su Supabase."
+        )
+
     if not da_censimento_remoto:
         atteso = titolo_atteso if (titolo_atteso and titolo_atteso.strip()) else configurazione.titolo_reale
         if _normalizza(titolo) != _normalizza(atteso):

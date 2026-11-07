@@ -172,6 +172,28 @@ class TestLeGuardieSullaNota(unittest.TestCase):
         self.assertIsInstance(consenso, ConsensoNotaReale)
         self.assertEqual(consenso.titolo, "Spesa di famiglia")
 
+    def test_censimento_remoto_rifiuta_la_nota_di_prova(self) -> None:
+        # ⚠️ Il caso del 14/10/2026: la lista vera agganciata a «PROVA ponte»,
+        # sincronizzata per dieci giorni con la spia verde. Il marcatore che lo
+        # spike pretende è la prova che non è la lista di nessuno.
+        with self.assertRaises(NotaRealeNonConfermata) as caso:
+            verifica_nota_reale(
+                self._lista("Lista PROVA ponte"),
+                configurazione(),
+                "qualsiasi-id",
+                da_censimento_remoto=True,
+            )
+        self.assertIn("nota di prova", str(caso.exception))
+
+    def test_censimento_remoto_marcatore_senza_maiuscole(self) -> None:
+        with self.assertRaises(NotaRealeNonConfermata):
+            verifica_nota_reale(
+                self._lista("prova ponte"),
+                configurazione(),
+                "qualsiasi-id",
+                da_censimento_remoto=True,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
